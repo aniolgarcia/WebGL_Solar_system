@@ -1,0 +1,576 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>Index</title>
+
+<!-- operacions amb matrius -->
+<script type="text/javascript" src="./index/gl-matrix-min.js"></script>
+
+<!-- utilitats per compatibilitat entre navegadors -->
+<script type="text/javascript" src="./index/webgl-utils.js"></script>
+
+<!-- Models -->
+<script type="text/javascript" src="./index/Cube.js"></script>
+<script type="text/javascript" src="./index/Ball.js"></script> 
+<script type="text/javascript" src="./index/objloader.js"></script>
+<!--<script type="text/javascript">
+
+ var msh1 = new Mesh("index/anell/anell");
+  var msh1Scale = [10, 10, 10];
+
+</script> -->
+<!-- Camera -->
+<script type="text/javascript" src="./index/Camera.js"></script>
+
+<!-- Utilitat per carregar textures i degToRad -->
+<script type="text/javascript" src="./index/utils.js"></script>
+
+<!-- vertex shader -->
+<script id="shader-vs" type="x-shader/x-vertex">
+    precision mediump float;
+    attribute vec3 aVertexPos;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aCoordTextura;
+
+    uniform mat4 uMMatrix;
+    uniform mat4 uVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    varying vec2 vCoordTextura;
+    varying vec3 vNormalTransformada;
+    varying vec4 vPosicio;
+
+    void main(void) {
+        vPosicio = uVMatrix * uMMatrix * vec4(aVertexPos, 1.0);
+        vCoordTextura = aCoordTextura;
+        vNormalTransformada = normalize(uNMatrix * aVertexNormal);
+        gl_Position = uPMatrix * vPosicio;
+    }
+</script>
+
+<!-- fragment shader -->
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+
+    uniform mat4 uVMatrix;
+    uniform float esElSol;
+
+    varying vec2 vCoordTextura;
+    varying vec3 vNormalTransformada;
+    varying vec4 vPosicio;
+
+    vec3 colorAmbient = vec3(0.2,0.2,0.2);
+    vec3 colorLlum = vec3(0.8,0.8,0.8);
+    uniform vec3 uPosLlum;
+
+    uniform sampler2D uSampler;
+
+    void main(void) { 	
+	vec3 lightDirection = normalize(vec4(uVMatrix * vec4(uPosLlum,2.5)).xyz - vPosicio.xyz);
+        float factorLlumDireccional = max(dot(vNormalTransformada, lightDirection), 0.1);
+        vec3 factorLlum = colorAmbient + colorLlum * factorLlumDireccional;
+
+        vec4 colorTextura = texture2D(uSampler, vec2(vCoordTextura.s, vCoordTextura.t));
+        
+        if (esElSol == 0.0) {
+            gl_FragColor = vec4(colorTextura.rgb * factorLlum, colorTextura.a);
+        } else {
+            gl_FragColor = vec4(colorTextura.rgb, colorTextura.a);
+        }
+    }
+</script>
+
+<script type="text/javascript">
+    function Renderer(canvas) {
+	this.gl = this.initGL(canvas); //el contexte utilitzat.
+	this.shaderProgram = this.initShaders("shader-vs","shader-fs");
+	
+	//ModelView Matrix, un stack per fer push i pop
+    	this.mMatrix = mat4.create();
+    	this.vMatrix = mat4.create();
+    	this.mMatrixStack = [];
+
+	//vista stàndard de perspectiva (3D) aplicada a la Projection Matrix
+    	this.pMatrix = mat4.create();
+	mat4.perspective(this.pMatrix,45, this.gl.viewportWidth / this.gl.viewportHeight, 1, 100);  //anterior  45 3 13
+
+	this.tempsPrevi = 0.0; // utilitzat per calcular el deltaTime de cada frame
+
+	//objectes
+	this.cube = new Cube(this.gl, "./index/crate.gif");
+	this.lluna = new Ball(this.gl, "./index/moon.gif");
+    this.sol = new Ball(this.gl, "./index/texture_sun.jpg");  //o sunmap.jpg
+    this.mercuri = new Ball(this.gl, "./index/mercuri.jpg");
+    this.venus = new Ball(this.gl, "./index/venus.jpg");
+    this.earth = new Ball(this.gl, "./index/earth2.jpg");
+    this.mart = new Ball(this.gl, "./index/mart.jpg");
+    this.jupiter = new Ball(this.gl, "./index/jupiter.jpg");
+    this.saturn = new Ball(this.gl, "./index/saturn.jpg");
+    this.ura = new Ball(this.gl, "./index/uranus.jpg");
+    this.neptu = new Ball(this.gl, "./index/neptune.jpg");
+    this.pluto = new Ball(this.gl, "./index/sunmap.jpg");
+    this.ring = new Ball(this.gl, "./index/saturn_ring.png");
+    this.ring2 = new Ball(this.gl, "./index/saturn_ring.png");
+    this.univers =new Ball(this.gl, "./index/milkyway.jpg");
+ //   this.anell = new Mesh("index/anell/anell");
+    //this.donut = new Mesh("index/donut", "./index/saturn_ring.png");
+
+    
+    
+    
+	//llum
+	this.posLlum = vec3.fromValues(0.0,0.0,-10.0);
+
+	//camera amb rotacions eulerianes (angles X i Y només)
+	this.camera = new Camera();
+
+        this.gl.enable(this.gl.DEPTH_TEST);
+        this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+	
+	//input
+	this.teclesPresionades = {}
+	this.mouseDown = false;
+	this.mouseX = 0;
+	this.mouseY = 0;
+	this.nouMouseX = 0;
+	this.nouMouseY = 0;	
+	var renderer = this;
+    	document.onkeydown = function(event) { renderer.handleKeyDown(event); };
+    	document.onkeyup = function(event) { renderer.handleKeyUp(event); };
+        canvas.onmousedown = function(event) { renderer.handleMouseDown(event); };
+        document.onmouseup = function(event) { renderer.handleMouseUp(event); };
+        document.onmousemove = function(event) { renderer.handleMouseMove(event); };
+        
+        this.tx = 0;
+    }
+
+    Renderer.prototype.handleMouseDown = function(event) {
+        this.mouseDown = true;
+    }
+
+    Renderer.prototype.handleMouseUp = function(event) {
+        this.mouseDown = false;
+    }
+
+    Renderer.prototype.handleMouseMove = function(event) {
+        this.nouMouseX = event.clientX;
+        this.nouMouseY = event.clientY;
+    }
+
+    Renderer.prototype.handleKeyDown = function(event) {
+        this.teclesPresionades[event.keyCode] = true;
+    }
+
+    Renderer.prototype.handleKeyUp = function(event) {
+        this.teclesPresionades[event.keyCode] = false;
+    }
+
+    Renderer.prototype.handleKeys = function(deltaTime) {
+	//Per fer servir aquesta funció, utilitzem:
+	//if(this.teclesPresionades[codi_ASCII_de_la_tecla] == true) { 
+	//	...
+	//}
+    if(this.teclesPresionades[32] == true) { 
+        this.tx = this.tx + 0.05;
+    }
+    if(this.teclesPresionades[88] == true) { 
+        this.tx = this.tx + 0.1;
+    }
+    }
+
+    Renderer.prototype.handleMouse = function(deltaTime) {
+	var deltaX = this.nouMouseX -this.mouseX;
+	var deltaY = this.nouMouseY -this.mouseY;
+	if(this.mouseDown == true) {
+	    this.camera.rotateX(deltaY); //l'eix X controla la rotació vertical (mirar a dalt o abaix)
+	    this.camera.rotateY(deltaX); //l'eix Y controla la rotació horitzontal (mirar a esquerra o dreta)
+	}
+	this.mouseX = this.nouMouseX;
+	this.mouseY = this.nouMouseY;
+    }
+
+    Renderer.prototype.initGL = function(canvas) { //retorna un contexte en el canvas donat, amb el format del canvas
+        try {
+            var gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+	return gl;
+    }
+
+    Renderer.prototype.getShader = function(id) { //retorna un shader a partir d'una id
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) { //node de tipus text
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = this.gl.createShader(this.gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = this.gl.createShader(this.gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        this.gl.shaderSource(shader, str);
+        this.gl.compileShader(shader);
+        if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) { //error de compilació
+            alert(this.gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+    Renderer.prototype.initShaders = function(stringV,stringF) { //retorna un programa a partir de dos shaders
+        var vertexShader = this.getShader(stringV);
+        var fragmentShader = this.getShader(stringF);
+        this.gl.compileShader(vertexShader);
+        this.gl.compileShader(fragmentShader);
+        //alert(this.gl.getShaderInfoLog(vertexShader));
+        //alert(this.gl.getShaderInfoLog(fragmentShader));
+
+        var program = this.gl.createProgram();
+        this.gl.attachShader(program, vertexShader);
+        this.gl.attachShader(program, fragmentShader);
+        this.gl.linkProgram(program);
+        //alert(this.gl.getProgramInfoLog(program));
+        if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+            alert("No s'han pogut inicialitzar els shaders");
+        }
+
+        this.gl.useProgram(program);
+
+	//Declarem aquí els atributs i les uniforms del programa que hem compilat
+        program.vertexPositionAttribute = this.gl.getAttribLocation(program, "aVertexPos");
+        this.gl.enableVertexAttribArray(program.vertexPositionAttribute);
+
+        program.vertexNormalAttribute = this.gl.getAttribLocation(program, "aVertexNormal");
+        this.gl.enableVertexAttribArray(program.vertexNormalAttribute);
+
+        program.textureCoordAttribute = this.gl.getAttribLocation(program, "aCoordTextura");
+        this.gl.enableVertexAttribArray(program.textureCoordAttribute);
+
+        program.pMatrixUniform = this.gl.getUniformLocation(program, "uPMatrix");
+        program.vMatrixUniform = this.gl.getUniformLocation(program, "uVMatrix");
+        program.mMatrixUniform = this.gl.getUniformLocation(program, "uMMatrix");
+        program.nMatrixUniform = this.gl.getUniformLocation(program, "uNMatrix");
+        program.posLlumUniform = this.gl.getUniformLocation(program, "uPosLlum");
+        program.samplerUniform = this.gl.getUniformLocation(program, "uSampler");
+        
+        program.esElSol = this.gl.getUniformLocation(program, "esElSol");
+
+	return program;
+    }
+
+    Renderer.prototype.mPushMatrix = function() { //desa la ModelView
+        var c = mat4.create();
+        mat4.copy(c,this.mMatrix);
+        this.mMatrixStack.push(c);
+    }
+
+    Renderer.prototype.mPopMatrix = function() { //recupera la darrera ModelView desada
+        if (this.mMatrixStack.length == 0) {
+            throw "PopMatrix no ha trobat cap matriu desada!"; 
+        }
+        this.mMatrix = this.mMatrixStack.pop();
+    }
+
+    Renderer.prototype.setUniforms = function() { //enviem totes les uniforms del programa actual
+        this.gl.uniformMatrix4fv(this.shaderProgram.pMatrixUniform, false, this.pMatrix);
+        this.gl.uniformMatrix4fv(this.shaderProgram.mMatrixUniform, false, this.mMatrix);
+        this.gl.uniformMatrix4fv(this.shaderProgram.vMatrixUniform, false, this.vMatrix);
+        this.gl.uniform3fv(this.shaderProgram.posLlumUniform, this.posLlum);
+        var normalMatrix = mat3.create();
+	var mvMatrix = mat4.create();
+        mat4.multiply(mvMatrix,this.vMatrix,this.mMatrix);
+        mat3.normalFromMat4(normalMatrix, mvMatrix);
+        this.gl.uniformMatrix3fv(this.shaderProgram.nMatrixUniform, false, normalMatrix);
+    }
+
+    Renderer.prototype.update = function() {
+        var timeNow = new Date().getTime()/1000.0;
+        var deltaTime = timeNow - this.tempsPrevi;
+        this.tempsPrevi = timeNow;
+	//this.posLlum[0] = Math.sin(timeNow*2)*3.9;
+
+	renderer.handleKeys(deltaTime); //moviment
+	renderer.handleMouse(deltaTime); //càmera
+    }
+
+    Renderer.prototype.draw = function() {
+	//netejar la pantalla
+        this.gl.viewport(0, 0, this.gl.viewportWidth, this.gl.viewportHeight);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+	
+	//resetejar la ModelView
+        mat4.identity(this.vMatrix);
+        mat4.identity(this.mMatrix);
+	//aplicar les transformacions de la càmera
+	//fem un translate fixe per que la camera roti al voltant de l'escena.
+	mat4.translate(this.vMatrix, this.vMatrix,[0,0,-10]);
+        mat4.rotate(this.vMatrix, this.vMatrix, degToRad(this.camera.rot[0]), [1, 0, 0]);
+        mat4.rotate(this.vMatrix, this.vMatrix, degToRad(this.camera.rot[1]), [0, 1, 0]);
+	
+    
+    this.gl.uniform1f(this.shaderProgram.esElSol, 1.0);
+    
+	
+    //dibuixar univers
+       this.mPushMatrix();
+        	mat4.translate(this.mMatrix, this.mMatrix, [0.0, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [10, 10, 10]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.univers.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+    
+    
+    //dibuixar sol
+       this.mPushMatrix();
+        	mat4.translate(this.mMatrix, this.mMatrix, [0.0, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [1, 1, 1]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.sol.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+    
+        
+            this.gl.uniform1f(this.shaderProgram.esElSol, 0.0); //Comprovació de la llum del sol
+        
+        //dibuixar mercuri
+    
+        this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*5, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-2.25, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.01,0.01 ,0.01 ]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.mercuri.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+        
+        
+        //dibuixar venus
+    
+        this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*3, [0.0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-2.75, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.013,0.013 ,0.013 ]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.venus.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+        
+        
+           //dibuixar Terra
+    
+        this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/5, [.0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-3.750, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.12,0.12,0.12]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.earth.draw(this.gl,this.shaderProgram);
+		
+        
+            //Dibuixar la lluna
+                    mat4.rotate(this.mMatrix, this.mMatrix, this.tx*5, [0.0, 0.2, 0.1]);
+					mat4.translate(this.mMatrix, this.mMatrix, [-3, 0.0, 0.0]);
+					mat4.scale(this.mMatrix, this.mMatrix, [0.1, 0.1, 0.1]); 
+                    this.setUniforms(); 
+                this.lluna.draw(this.gl,this.shaderProgram);
+        
+        this.mPopMatrix();
+        
+        
+        
+             //dibuixar Mart
+    
+        this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/8, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-4.75, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.014,0.014,0.014]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.mart.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+        
+        
+        
+			//dibuixar Júpiter
+        
+        this.mPushMatrix(); // jupiter
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/12, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-6.50, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.24,0.24,0.24]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.jupiter.draw(this.gl,this.shaderProgram);
+        
+        
+            this.mPushMatrix(); // lluna 1
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*5, [0.0, 0.1, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-3.50, 0.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.08, 0.08, 0.08]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram); 
+            this.mPopMatrix();  // lluna 1     
+        
+            this.mPushMatrix(); // lluna 2
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*4, [0.0, 0.1, 0.2]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-4, 0.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.085, 0.085, 0.085]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram);
+            this.mPopMatrix();  // lluna 2
+            
+            this.mPushMatrix(); // lluna 3
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*4, [0.05, 0.2, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-4.50, 2.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.07, 0.07, 0.07]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram);
+            this.mPopMatrix();  // lluna 3
+                
+            this.mPushMatrix(); // lluna 4
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*4, [0.05, 0.2, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-4.50, 2.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.08, 0.08, 0.08]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram);
+            this.mPopMatrix();  // lluna 4    
+    
+        
+        this.mPopMatrix(); // jupiter
+    
+        
+             
+			//dibuixar Saturn
+        
+        this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/16, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-8.50, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.23,0.23,0.23]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.saturn.draw(this.gl,this.shaderProgram);
+    
+        
+            this.mPushMatrix();//Anell de saturn
+                mat4.rotate(this.mMatrix, this.mMatrix, this.tx/16, [2.5, 2.5, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [0.0, 0.0, 0.0]);
+                mat4.scale(this.mMatrix, this.mMatrix, [1.6,0.01,1.6]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+        this.ring2.draw(this.gl,this.shaderProgram);
+    
+       
+   /*    if (msh1.loaded) {
+                    mat4.scale(this.mMatrix, this.mMatrix, msh1Scale);
+        	    this.setUniforms(this.shaderProgram);
+                    msh1.draw(this.gl,this.shaderProgram);
+                } else {
+        	    this.setUniforms();
+		    this.moon.draw(this.gl,this.shaderProgram);
+                } */
+           this.mPopMatrix();//Anell de saturn
+       
+       
+       
+            this.mPushMatrix(); // lluna 1
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*5, [0.0, 0.3, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-3.50, 0.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.08, 0.08, 0.08]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram); 
+            this.mPopMatrix();  // lluna 1     
+        
+            this.mPushMatrix(); // lluna 2
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx*4, [0.0, 0.2, 0.1]);
+                mat4.translate(this.mMatrix, this.mMatrix, [-4, 0.0, 0.75]);
+                mat4.scale(this.mMatrix, this.mMatrix, [0.085, 0.085, 0.085]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+            this.lluna.draw(this.gl,this.shaderProgram);
+            this.mPopMatrix();  // lluna 2
+       
+       
+       
+       
+        this.mPopMatrix();
+        
+        
+        //dibuixar Urà
+        
+        
+          this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/20, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-9.50, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.015,0.015 ,0.015 ]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.ura.draw(this.gl,this.shaderProgram);
+            //Anell urà
+              this.mPushMatrix();//Anell de saturn
+                mat4.rotate(this.mMatrix, this.mMatrix, this.tx/16, [2.5, 2.5, 0.0]);
+                mat4.translate(this.mMatrix, this.mMatrix, [0.0, 0.0, 0.0]);
+                mat4.scale(this.mMatrix, this.mMatrix, [1.8,0.01,1.8]); 
+                this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+			this.ring2.draw(this.gl,this.shaderProgram);
+           this.mPopMatrix();
+           
+          
+       
+        
+        ////dibuixar Neptú 
+        
+        
+        this.mPopMatrix();
+          this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/22, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-9.75, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.014,0.014 ,0.014 ]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.neptu.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+        
+        //dibuixar Plutó
+          this.mPushMatrix();
+            mat4.rotate(this.mMatrix, this.mMatrix, this.tx/23, [0, 5.0, 0.0]);
+        	mat4.translate(this.mMatrix, this.mMatrix, [-10, 0.0, 0.0]);
+            mat4.scale(this.mMatrix, this.mMatrix, [0.013,0.013 ,0.013 ]); 
+        	this.setUniforms(); //envia les matrius (ModelView i Projection al shader
+		this.pluto.draw(this.gl,this.shaderProgram);
+        this.mPopMatrix();
+
+
+
+    this.setUniforms();
+    }
+    var renderer;
+
+    function loop() { //main loop de l'escena, es truca cada vegada que es vol refrescar la pantalla
+        requestAnimFrame(loop);
+        renderer.update();
+        renderer.draw();
+    }
+
+    function webGLStart() {
+    	var canvas = document.getElementById("canvas");
+	canvas.width = document.body.clientWidth; 
+ 	canvas.height = document.body.clientHeight;
+	renderer = new Renderer(canvas);
+        loop();
+    }
+
+</script>
+</head>
+
+<body onload="webGLStart();">
+    <canvas id="canvas" style="border: none;"></canvas>
+</body>
+</html>

@@ -7,4 +7,4 @@ won't be correct.
 
 At the moment, the comments in the code (and the code itself), are in Catalan, maybe them will be translated in the future...
 
-Hope youenjoy it!
+Hope you enjoy it!
